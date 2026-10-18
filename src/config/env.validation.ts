@@ -15,8 +15,8 @@ export const envValidationSchema = Joi.object({
   ALCHEMY_API_KEY: Joi.string().required(),
   ALCHEMY_SUB_API_KEY: Joi.string().allow('').default(''),
   POLL_INTERVAL_MS: Joi.number().min(100).default(3000),
-  // 입금 감지에서 확정으로 보는 블록 수. 최신 블록에서 이만큼 지난 블록만 처리한다
-  DEPOSIT_CONFIRMATIONS: Joi.number().integer().min(1).default(12),
+  // polling-deposit 이 finalized 블록을 확인하는 간격(ms)
+  DEPOSIT_POLL_INTERVAL_MS: Joi.number().integer().min(1000).default(60000),
   // polling-deposit 이 eth_getLogs 한 번에 확인할 블록 수. Alchemy 무료 플랜은 한 번에 10블록까지만 된다
   DEPOSIT_SCAN_BATCH: Joi.number().integer().min(1).default(10),
 

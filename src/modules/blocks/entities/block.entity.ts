@@ -6,7 +6,14 @@ const bigintToNumber = {
   from: (value: string): number => Number(value),
 };
 
-/** 저장한(확정된) 블록 한 개 = 한 행. (chain_id, number) 가 PK */
+/**
+ * 블록 상태 (체인 기준)
+ * - unfinalized: polling-block 이 저장한 블록. 아직 reorg 로 바뀔 수 있다 (polling-block 이 되감을 수 있다)
+ * - finalized:   polling-deposit 이 노드의 finalized 블록과 맞춰 확정한 블록. 더는 바뀌지 않는다
+ */
+export type BlockStatus = 'unfinalized' | 'finalized';
+
+/** 저장한 블록 한 개 = 한 행. (chain_id, number) 가 PK */
 @Entity('blocks')
 export class BlockEntity {
   @PrimaryColumn({ name: 'chain_id', type: 'integer' })
@@ -28,12 +35,13 @@ export class BlockEntity {
   @Column({ name: 'block_time', type: 'timestamptz' })
   blockTime!: Date;
 
-  /**
-   * 이 블록의 ERC20 Transfer 로그(토큰 입금)를 확인했는지.
-   * polling-deposit 이 블록 여러 개를 eth_getLogs 한 번으로 확인하고 한꺼번에 true 로 바꾼다
-   */
-  @Column({ name: 'logs_scanned', type: 'boolean', default: false })
-  logsScanned!: boolean;
+  /** 블록 상태 (BlockStatus 참고) */
+  @Column({ type: 'varchar', length: 12, default: 'unfinalized' })
+  status!: BlockStatus;
+
+  /** polling-deposit 이 이 블록의 입금(Transfer 로그)을 확인했는지. finalized 블록만 확인한다 */
+  @Column({ name: 'is_scanned', type: 'boolean', default: false })
+  isScanned!: boolean;
 
   /** DB 에 저장된 시각 */
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })

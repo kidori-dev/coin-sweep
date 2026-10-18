@@ -56,7 +56,12 @@ export class TargetBlockCommand extends CommandRunner {
       throw new Error(`#${blockNumber} 블록이 없습니다.`);
     }
 
-    await this.blocks.saveBlock(block);
+    if ((await this.blocks.saveBlock(block)) === 'rolled-back') {
+      throw new Error(
+        `#${blockNumber - 1} 이 체인에서 빠진 블록이라 지웠습니다 (reorg). ` +
+          `target-block ${blockNumber - 1} 부터 다시 채우세요.`,
+      );
+    }
     this.logger.log(`${formatBlock(block)} → 저장 완료 (토큰 입금은 polling-deposit 이 확인한다)`);
   }
 }

@@ -10,9 +10,10 @@ export default () => ({
     expiresInSeconds: parseInt(process.env.JWT_EXPIRES_IN ?? '3600', 10),
     refreshExpiresInSeconds: parseInt(process.env.JWT_REFRESH_EXPIRES_IN ?? '1209600', 10),
   },
-  // 입금 감지: 최신 블록에서 이만큼 지난 블록만 처리한다 (reorg 로 입금이 취소되는 일을 피하려고)
+  // 입금 감지 (polling-deposit). finalized 블록만 확인한다
   deposit: {
-    confirmations: parseInt(process.env.DEPOSIT_CONFIRMATIONS ?? '12', 10),
+    // finalized 블록을 확인하는 간격 (finalized 는 약 6.4분마다 32블록씩 늘어나서 자주 볼 필요가 없다)
+    pollIntervalMs: parseInt(process.env.DEPOSIT_POLL_INTERVAL_MS ?? '60000', 10),
     // polling-deposit: 로그 확인 안 된 블록이 이만큼 쌓이면 eth_getLogs 한 번으로 확인한다
     scanBatch: parseInt(process.env.DEPOSIT_SCAN_BATCH ?? '10', 10),
   },

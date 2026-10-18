@@ -85,10 +85,10 @@ npm run start:dev      # http://localhost:3000/api , Swagger 문서: /api/docs (
 # 로그인 유저 만들기
 npm run cli -- user-create -e user@example.com -p password1234 -n 이름
 
-# 1) 확정 블록을 따라가며 blocks 에 저장 (Ctrl+C 로 종료, 다시 실행하면 이어서)
+# 1) 최신 블록을 따라가며 blocks 에 저장 (reorg 는 자동으로 되감는다. Ctrl+C 로 종료, 다시 실행하면 이어서)
 npm run cli -- polling-block
 
-# 2) 저장된 블록을 10개씩 모아 eth_getLogs 1회로 토큰 입금 확인 → transactions 저장 + 포인트 적립
+# 2) finalized 된 블록을 10개씩 모아 eth_getLogs 1회로 토큰 입금 확인 → transactions 저장 + 포인트 적립
 npm run cli -- polling-deposit
 
 # polling-block 이 지나간 구간에서 빠진 블록 하나를 저장 (앞쪽 블록은 거부. 입금 확인은 polling-deposit 이 한다)
@@ -101,20 +101,24 @@ npm run cli -- user-balance alice@example.com
 ### 입금 처리 흐름
 
 ```
-polling-block    블록 저장 (blocks, logs_scanned = false)
+polling-block    최신 블록 저장 (blocks.status = unfinalized)
+                 reorg 면 빠진 unfinalized 블록을 지우고 되감아서 다시 받는다
       ↓
-polling-deposit  확인 안 된 블록이 DEPOSIT_SCAN_BATCH(10)개 쌓이면
+polling-deposit  DEPOSIT_POLL_INTERVAL_MS(60초)마다 노드의 finalized 블록을 확인하고
+                 그 번호 이하의 unfinalized 블록을 finalized 로 바꾼다 (DB 의 같은 번호 블록 hash 가 같을 때만)
+                 finalized 블록이 DEPOSIT_SCAN_BATCH(10)개 쌓이면
                  eth_getLogs 1회 (그 구간의 등록된 토큰 Transfer 로그)
                  → 받는 주소가 deposit_addresses 면 입금
                  → transactions 저장 + user_balances.points 증가 + ledger_entries 기록
-                 → 그 구간 blocks.logs_scanned = true   (전부 한 DB 트랜잭션)
+                 → 그 구간 blocks.is_scanned = true   (전부 한 DB 트랜잭션)
 ```
 
-- 확정 블록 = 최신 블록에서 `DEPOSIT_CONFIRMATIONS`(기본 12) 만큼 지난 블록. polling-block 은 최신보다 그만큼 뒤를 따라간다.
-- 블록마다 묻지 않고 10개씩 모아서 묻기 때문에 Alchemy 요청이 적다 (대신 입금 반영이 블록 10개만큼 늦다). Alchemy 무료 플랜은 eth_getLogs 한 번에 10블록까지라 기본값이 10 이다.
+- **블록 상태**: `status` = `unfinalized`(저장됨, 아직 바뀔 수 있음) → `finalized`(최종 확정). `is_scanned` = 입금 확인을 끝냈는지. polling-deposit 은 `finalized` 이고 `is_scanned = false` 인 블록을 확인한다.
+- **finalized 블록만 입금 확인**: finalized(최종 확정) 블록은 프로토콜상 되돌려지지 않아서, 적립한 포인트가 reorg 로 무효가 되는 일이 없다. 대신 입금 반영이 약 13~15분 걸린다 (이더리움/Sepolia 기준).
+- **reorg**: polling-block 은 최신 블록을 저장하므로 1~2블록짜리 reorg 를 만날 수 있다. 새 블록이 저장된 앞 블록과 이어지지 않으면 앞 블록을 지우고 이어지는 지점까지 되감는다. 아직 입금 확인 전인 블록이라 포인트에는 영향이 없다. (finalized 블록이 뒤집히면 프로토콜상 일어나면 안 되는 일이라 자동으로 고치지 않고 멈춘다)
+- 블록마다 묻지 않고 10개씩 모아서 묻기 때문에 Alchemy 요청이 적다. Alchemy 무료 플랜은 eth_getLogs 한 번에 10블록까지라 기본값이 10 이다.
 - **이중 입금 방지**: transactions 의 `(chain_id, tx_hash, log_index)` 가 유니크라 이미 있는 tx 는 건너뛰고 포인트도 올리지 않는다. 원장도 `(type, transaction_id)` 가 유니크다.
 - **포인트** = 토큰 개수 × `currencies.point_ratio` (소수 6자리 아래는 버림). 예) ratio 1 이면 100 USDT → 100 포인트.
-- 저장된 앞 블록과 이어지지 않거나, 로그의 블록 hash 가 저장된 블록과 다르면(reorg) 멈추고 에러를 남긴다.
 - 등록된 토큰이나 입금 주소가 하나도 없으면 polling-deposit 은 블록을 확인 처리하지 않고 기다린다 (등록하면 그때부터 쌓인 블록을 확인).
 - 비활성(`currency-disable`) 토큰도 입금은 계속 기록한다. 토큰 등록 전에 이미 확인된 블록의 그 토큰 입금은 기록되지 않는다.
 - DB 의 모든 테이블/컬럼에 설명(COMMENT)이 달려 있다. DB 툴에서 바로 보인다.
