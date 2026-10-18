@@ -8,13 +8,16 @@ import { BlocksService } from '../modules/blocks/blocks.service';
 /**
  * 사용법: npm run cli -- target-block <블록 높이>
  *
- * 입력한 블록 하나만 조회해서 blocks 테이블에 저장하고 종료한다.
- * 이미 저장된 블록이면 조회 없이 건너뛴다.
+ * polling-block 이 이미 지나간 구간에서 빠진 블록 하나를 채운다 (백필용).
+ * 저장된 블록의 토큰 입금은 polling-deposit 이 확인한다.
+ *
+ * polling-block 의 마지막 저장 블록보다 뒤의 블록은 저장하지 않는다.
+ * (뒤의 블록을 먼저 저장하면 polling-block 이 거기서부터 이어가서 그 사이 블록을 건너뛰게 된다)
  */
 @Command({
   name: 'target-block',
   arguments: '<blockNumber>',
-  description: '입력한 블록 높이의 블록 하나만 조회해 저장한다. 이미 저장돼 있으면 건너뛴다.',
+  description: 'polling-block 이 지나간 구간에서 빠진 블록 하나를 저장한다. 이미 있으면 건너뛴다.',
 })
 export class TargetBlockCommand extends CommandRunner {
   private readonly logger = new Logger(TargetBlockCommand.name);
@@ -38,12 +41,22 @@ export class TargetBlockCommand extends CommandRunner {
       return;
     }
 
-    const block = await this.alchemy.getBlock(blockNumber);
-    if (!block) {
-      throw new Error(`#${blockNumber} 블록이 아직 없습니다.`);
+    // polling-block 이 아직 가지 않은 블록은 저장하지 않는다 (polling-block 이 저장한다)
+    const lastSavedNumber = await this.blocks.findLatestNumber();
+    if (lastSavedNumber === null || blockNumber > lastSavedNumber) {
+      throw new Error(
+        `#${blockNumber} 은 polling-block 이 아직 지나가지 않은 블록입니다 ` +
+          `(마지막 저장 블록: ${lastSavedNumber === null ? '없음' : `#${lastSavedNumber}`}). ` +
+          'target-block 은 지나간 구간에서 빠진 블록을 채울 때만 쓴다.',
+      );
     }
 
-    await this.blocks.save(block);
-    this.logger.log(`${formatBlock(block)} → 저장 완료`);
+    const block = await this.alchemy.getBlock(blockNumber);
+    if (!block) {
+      throw new Error(`#${blockNumber} 블록이 없습니다.`);
+    }
+
+    await this.blocks.saveBlock(block);
+    this.logger.log(`${formatBlock(block)} → 저장 완료 (토큰 입금은 polling-deposit 이 확인한다)`);
   }
 }

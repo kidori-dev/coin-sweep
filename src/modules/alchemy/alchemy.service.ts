@@ -1,6 +1,41 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Block, FetchRequest, JsonRpcProvider, Network } from 'ethers';
+import {
+  Block,
+  FetchRequest,
+  Filter,
+  FilterByBlockHash,
+  Interface,
+  InterfaceAbi,
+  JsonRpcProvider,
+  Log,
+  Network,
+  TransactionReceipt,
+  TransactionResponse,
+  Wallet,
+} from 'ethers';
+
+import { errorMessage } from '../../common/errors';
+
+/**
+ * Multicall3: 여러 view 호출을 한 번에 묶어주는 공용 컨트랙트.
+ * 이더리움 메인넷, Sepolia 등 대부분의 EVM 체인에 이 주소로 이미 배포되어 있다.
+ */
+export const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
+export const MULTICALL3_ABI = [
+  'function aggregate3((address target, bool allowFailure, bytes callData)[] calls) view returns ((bool success, bytes returnData)[])',
+];
+const MULTICALL_CHUNK_SIZE = 500;
+
+export interface MulticallCall {
+  target: string;
+  callData: string;
+}
+
+export interface MulticallResult {
+  success: boolean;
+  returnData: string;
+}
 
 /**
  * Alchemy 노드에 블록 정보를 물어보는 서비스.
@@ -30,9 +65,87 @@ export class AlchemyService {
     return this.request((rpc) => rpc.getBlockNumber());
   }
 
+  /** 트랜잭션 영수증. 아직 블록에 포함되지 않았으면 null */
+  getTransactionReceipt(txHash: string): Promise<TransactionReceipt | null> {
+    return this.request((rpc) => rpc.getTransactionReceipt(txHash));
+  }
+
+  /** 트랜잭션. 노드가 모르는 트랜잭션이면(버려졌거나 아직 전파 전) null */
+  getTransaction(txHash: string): Promise<TransactionResponse | null> {
+    return this.request((rpc) => rpc.getTransaction(txHash));
+  }
+
+  /** 주소가 지금까지 블록에 포함시킨 트랜잭션 수 = 다음에 쓸 nonce */
+  getConfirmedNonce(address: string): Promise<number> {
+    return this.request((rpc) => rpc.getTransactionCount(address, 'latest'));
+  }
+
+  /** ETH 잔액 (wei). sweep 실행 계정의 가스비 확인에 쓴다 */
+  getBalance(address: string): Promise<bigint> {
+    return this.request((rpc) => rpc.getBalance(address));
+  }
+
+  /** 주소에 배포된 컨트랙트 코드. 컨트랙트가 없으면 '0x' */
+  getCode(address: string): Promise<string> {
+    return this.request((rpc) => rpc.getCode(address));
+  }
+
+  /**
+   * 컨트랙트의 view 함수를 호출한다 (eth_call, 가스비 없음).
+   * 예) call(factory, SWEEP_FACTORY_ABI, 'predictAddress', [salt])
+   */
+  async call<T>(to: string, abi: InterfaceAbi, method: string, args: unknown[] = []): Promise<T> {
+    const iface = new Interface(abi);
+    const data = iface.encodeFunctionData(method, args);
+    const result = await this.request((rpc) => rpc.call({ to, data }));
+    return iface.decodeFunctionResult(method, result)[0] as T;
+  }
+
+  /**
+   * 여러 view 호출을 Multicall3 로 묶어서 한 번에 보낸다. 주소 수천 개의 잔액 조회 등에 쓴다.
+   * 결과는 calls 와 같은 순서다. 실패한 호출은 success=false.
+   */
+  async multicall(calls: MulticallCall[]): Promise<MulticallResult[]> {
+    if ((await this.getCode(MULTICALL3_ADDRESS)) === '0x') {
+      throw new Error(`이 체인에는 Multicall3(${MULTICALL3_ADDRESS})가 배포되어 있지 않습니다.`);
+    }
+
+    const results: MulticallResult[] = [];
+    // 한 요청이 너무 커지지 않게 나눠서 보낸다
+    for (let i = 0; i < calls.length; i += MULTICALL_CHUNK_SIZE) {
+      const chunk = calls.slice(i, i + MULTICALL_CHUNK_SIZE);
+      const chunkResults = await this.call<[boolean, string][]>(
+        MULTICALL3_ADDRESS,
+        MULTICALL3_ABI,
+        'aggregate3',
+        [chunk.map((c) => ({ target: c.target, allowFailure: true, callData: c.callData }))],
+      );
+      results.push(...chunkResults.map(([success, returnData]) => ({ success, returnData })));
+    }
+    return results;
+  }
+
+  /** 노드에 직접 물어본 체인 ID. .env 의 CHAIN_ID 가 맞는지 확인할 때 쓴다 */
+  async getNodeChainId(): Promise<number> {
+    return Number(await this.request((rpc) => rpc.send('eth_chainId', [])));
+  }
+
+  /**
+   * 트랜잭션을 보낼 지갑. 컨트랙트 배포 등에 쓴다.
+   * 같은 트랜잭션을 두 번 보내는 일이 없도록 서브 키 대체 없이 메인 키로만 보낸다.
+   */
+  createWallet(privateKey: string): Wallet {
+    return new Wallet(privateKey, this.mainRpc);
+  }
+
   /** 블록 하나를 조회한다. 아직 없는 블록이면 null */
   getBlock(blockNumber: number): Promise<Block | null> {
     return this.request((rpc) => rpc.getBlock(blockNumber));
+  }
+
+  /** 이벤트 로그를 조회한다. 예) 특정 블록의 ERC20 Transfer 로그 */
+  getLogs(filter: Filter | FilterByBlockHash): Promise<Log[]> {
+    return this.request((rpc) => rpc.getLogs(filter));
   }
 
   /** 메인 키로 요청하고, 실패하면 서브 키로 다시 요청한다 */
@@ -63,9 +176,4 @@ function createRpc(url: string, apiKey: string, chainId: number): JsonRpcProvide
   // 키가 막혀 있으면 이 확인을 에러 없이 무한 재시도해서 서브 키로 넘어가지 못한다.
   const network = Network.from(chainId);
   return new JsonRpcProvider(request, network, { staticNetwork: network });
-}
-
-/** ethers 에러의 전체 메시지에는 요청 URL(=키)이 들어갈 수 있어 짧은 메시지만 쓴다 */
-function errorMessage(err: unknown): string {
-  return (err as { shortMessage?: string }).shortMessage ?? (err as Error).message;
 }

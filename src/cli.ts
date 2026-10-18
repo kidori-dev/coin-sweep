@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import { CommandFactory } from 'nest-commander';
 
 import { CliModule } from './commands/cli.module';
+import { errorMessage } from './common/errors';
 
 /** CLI 진입점. 예) npm run cli -- polling-block */
 async function bootstrap(): Promise<void> {
@@ -12,12 +13,12 @@ async function bootstrap(): Promise<void> {
       if (err.exitCode === 0) {
         return;
       }
-      Logger.error(err.message, err.stack, 'CLI');
+      Logger.error(errorMessage(err), 'CLI');
       process.exitCode = 1;
     },
-    // 커맨드 run() 안에서 던진 에러. 메시지만 보여주고 실패 코드로 끝낸다.
+    // 커맨드 run() 안에서 던진 에러. 메시지만 보여주고 실패 코드로 끝낸다 (API 키는 가린다)
     serviceErrorHandler: (err: Error) => {
-      Logger.error(err.message, 'CLI');
+      Logger.error(errorMessage(err), 'CLI');
       process.exitCode = 1;
     },
   });

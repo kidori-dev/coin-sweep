@@ -6,9 +6,12 @@ const bigintToNumber = {
   from: (value: string): number => Number(value),
 };
 
-/** 조회한 블록 한 개 = 한 행 */
+/** 저장한(확정된) 블록 한 개 = 한 행. (chain_id, number) 가 PK */
 @Entity('blocks')
 export class BlockEntity {
+  @PrimaryColumn({ name: 'chain_id', type: 'integer' })
+  chainId!: number;
+
   @PrimaryColumn({ type: 'bigint', transformer: bigintToNumber })
   number!: number;
 
@@ -24,6 +27,13 @@ export class BlockEntity {
   /** 블록이 만들어진 시각 */
   @Column({ name: 'block_time', type: 'timestamptz' })
   blockTime!: Date;
+
+  /**
+   * 이 블록의 ERC20 Transfer 로그(토큰 입금)를 확인했는지.
+   * polling-deposit 이 블록 여러 개를 eth_getLogs 한 번으로 확인하고 한꺼번에 true 로 바꾼다
+   */
+  @Column({ name: 'logs_scanned', type: 'boolean', default: false })
+  logsScanned!: boolean;
 
   /** DB 에 저장된 시각 */
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
