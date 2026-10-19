@@ -27,7 +27,7 @@ export default () => ({
     chainId: parseInt(process.env.CHAIN_ID ?? '0', 10),
     apiKey: process.env.ALCHEMY_API_KEY ?? '',
     subApiKey: process.env.ALCHEMY_SUB_API_KEY ?? '',
-    pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS ?? '3000', 10),
+    pollIntervalMs: parseInt(process.env.POLL_INTERVAL_MS ?? '6000', 10),
   },
   database: {
     host: process.env.DB_HOST ?? 'localhost',
